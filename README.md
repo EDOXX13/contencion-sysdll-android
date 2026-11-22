@@ -19,7 +19,7 @@ Registro de cambios
 Caracteristica	Xiaomi 24090RA29G	Nubia Z2468N
 Paquete	`co.sitic.pp`	`co.sitic.pp`
 Nombre observado	SysDLL	Sysdll_CLA_CL
-Android observado	Android 16 / HyperOS	Android 15, API 35
+Android observado	Android 16 / HyperOS (dato reportado; salida `getprop` no conservada en esta guia)	Android 15, API 35
 Device	No conservado en esta guia	`P780F02`
 Ruta APK	`/product/priv-app/SysDLL/`	`/system/priv-app/Sysdll_CLA_CL/`
 Tipo	`SYSTEM + PRIVILEGED + PRODUCT`	`SYSTEM + PRIVILEGED`
@@ -34,7 +34,7 @@ Revocar `RECEIVE_SMS`	No fue posible	Si fue posible
 `RUN_IN_BACKGROUND=ignore`	Funciono	Funciono y persistio
 `RUN_ANY_IN_BACKGROUND=ignore`	El firmware llego a restaurarlo	Funciono y persistio
 `WAKE_LOCK=ignore`	No fue la prueba principal	Funciono y persistio
-Blacklist NetPolicy	Probada	Probada, no persistio reinicio
+Blacklist NetPolicy	Probada; persistencia no comprobada de forma concluyente	Probada, no persistio reinicio
 Analisis JADX de SMS	Si	Pendiente
 Prueba SMS real / Logcat	Si	Pendiente, equipo sin SIM durante la prueba
 OTA auditada	No	Si
@@ -42,12 +42,14 @@ Leyenda:
 Funciona: comprobado en el equipo indicado.
 Falla/prohibido: comprobado que el firmware lo impide o no logra el efecto deseado.
 Pendiente: no probado en ese dispositivo.
+No revalidado: dato procedente de la sesion de pruebas, pero sin una salida de comando conservada en este README para volver a comprobarlo.
+> **Criterio editorial:** se distinguen resultados comprobados por salidas ADB/JADX visibles de correlaciones o datos historicos no revalidados. Una correlacion temporal no se presenta como causalidad.
 ---
 2. Dispositivo probado 1: Xiaomi 24090RA29G
 2.1 Caracteristicas observadas
 Fabricante: Xiaomi.
 Modelo observado: `24090RA29G`.
-Sistema durante las pruebas: Android 16 / HyperOS.
+Sistema durante las pruebas: Android 16 / HyperOS. Dato reportado durante la sesion anterior; no se conserva aqui una salida `getprop` del Xiaomi para revalidarlo independientemente.
 Paquete: `co.sitic.pp`.
 Nombre/ruta observada: SysDLL.
 Ruta base:
@@ -172,6 +174,7 @@ Y se probo:
 ```bat
 adb shell cmd netpolicy add restrict-background-blacklist 10168
 ```
+La persistencia de esa blacklist tras reinicio no quedo documentada de forma concluyente para el Xiaomi.
 Importante: NetPolicy restringe datos en segundo plano. No debe describirse como un firewall absoluto.
 2.11 Analisis JADX del receptor SMS
 Se extrajo el APK y se analizo con JADX.
@@ -192,7 +195,7 @@ getMessageBody()
 Por lo tanto, la variante analizada contiene logica capaz de obtener el remitente y el contenido de un SMS recibido.
 Tambien se identifico logica interna de validacion que, bajo condiciones especificas, puede terminar llamando una funcion de bloqueo del dispositivo. Los formatos concretos de control se omiten deliberadamente.
 2.12 Prueba controlada con SMS y Logcat
-En una prueba con un SMS inocuo se observo actividad SMS y, pocos segundos despues, actividad del paquete:
+En una prueba con un SMS inocuo se observo actividad SMS y, aproximadamente cuatro segundos despues, actividad del paquete:
 ```text
 co.sitic.pp/.jTarea
 ```
@@ -200,7 +203,7 @@ co.sitic.pp/.jTarea
 ```text
 android.provider.Telephony.SMS_RECEIVED
 ```
-Conclusion: no se trato solamente de un permiso declarado. Se comprobo la presencia de un receptor activo para `SMS_RECEIVED` y actividad temporal del paquete durante la prueba.
+Conclusion limitada: se comprobo que el proceso tenia un receptor activo registrado para `SMS_RECEIVED` y que hubo actividad de `.jTarea` pocos segundos despues de la llegada del SMS. El Logcat disponible no demostro que `.jTarea` fuese causada necesariamente por ese SMS ni mostro el contenido del mensaje procesado.
 ---
 3. Dispositivo probado 2: Nubia Z2468N
 3.1 Caracteristicas observadas
@@ -221,7 +224,7 @@ Tipo:
 SYSTEM
 PRIVILEGED
 ```
-Version observada tras la actualizacion auditada:
+Version de `co.sitic.pp` observada en la auditoria posterior a la actualizacion:
 ```text
 versionCode=1110
 versionName=0.06.1.30 GMS
@@ -414,7 +417,7 @@ En ambos dispositivos:
 `cmd package suspend` fue aceptado.
 El proceso/servicio podia continuar con `suspended=true`.
 Se encontro `.ServicioRegistro` activo.
-Los mecanismos normales de retiro/desactivacion estaban restringidos por el firmware.
+La desinstalacion por ADB estaba restringida en ambos. La deshabilitacion de componentes se comprobo bloqueada en Xiaomi; no se documenta como probada en Nubia.
 Era necesario verificar cada control despues de reiniciar.
 ---
 5. Procedimiento generico para otros dispositivos
