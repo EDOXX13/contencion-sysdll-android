@@ -1,208 +1,379 @@
-Contencion de `co.sitic.pp` / SysDLL en Android con ADB sin root
-Guia defensiva, reproducible y anonimizada para propietarios, administradores e investigadores autorizados. Resume pruebas realizadas en dispositivos Android donde `co.sitic.pp` viene preinstalado como aplicacion `SYSTEM/PRIVILEGED`.
-> Esta guia busca reducir capacidades sensibles sin modificar `/system` o `/product`, sin root y sin desbloquear el bootloader. No incluye cargas SMS, PINes, IMEI ni instrucciones para activar bloqueos.
-Advertencias
-Los resultados dependen del fabricante y firmware.
-Registra el estado original antes de cada cambio.
-No borres manualmente APK de `/system/priv-app` o `/product/priv-app`. Android Verified Boot puede impedir el arranque.
-No copies numeros de transaccion de `service call package` entre versiones de Android.
-`suspended=true` no garantiza que un servicio privilegiado se detenga.
-Data Saver y `netpolicy` no son un firewall absoluto.
-1. Requisitos
-Windows y cable USB de datos.
-Android SDK Platform-Tools.
-Depuracion USB activada y autorizada.
-Opcional: JADX GUI para analizar el APK.
-```bat
-adb devices
+Contencion defensiva de `co.sitic.pp` / SysDLL en Android mediante ADB sin root
+Guia reproducible y anonimizada basada en pruebas reales sobre dos implementaciones de `co.sitic.pp`: Xiaomi y Nubia.
+El objetivo es documentar por separado que funciono, que fallo y que persiste despues de reinicios o actualizaciones del sistema. No se asume que un procedimiento valido para una marca funcione en otra.
+> **Alcance defensivo:** esta guia esta destinada a propietarios, administradores e investigadores autorizados. No contiene IMEI, numeros de serie, PINes, numeros telefonicos ni mensajes capaces de activar funciones de bloqueo/desbloqueo.
+---
+Indice
+Resumen comparativo
+Dispositivo probado 1: Xiaomi 24090RA29G
+Dispositivo probado 2: Nubia Z2468N
+Comparacion de resultados
+Procedimiento generico para otros dispositivos
+Analisis del APK con JADX
+Verificacion con Logcat
+Comandos de reversion
+Advertencias y limitaciones
+Registro de cambios
+---
+1. Resumen comparativo
+Caracteristica	Xiaomi 24090RA29G	Nubia Z2468N
+Paquete	`co.sitic.pp`	`co.sitic.pp`
+Nombre observado	SysDLL	Sysdll_CLA_CL
+Android observado	Android 16 / HyperOS	Android 15, API 35
+Device	No conservado en esta guia	`P780F02`
+Ruta APK	`/product/priv-app/SysDLL/`	`/system/priv-app/Sysdll_CLA_CL/`
+Tipo	`SYSTEM + PRIVILEGED + PRODUCT`	`SYSTEM + PRIVILEGED`
+UID observado	`10168`	`10288`
+Servicio	`.ServicioRegistro`	`.ServicioRegistro`
+Suspender paquete	Funciono	Funciono
+Servicio siguio ejecutandose	Si	Si
+Force-stop	Inefectivo	Prohibido por firmware
+Desinstalar por ADB	Fallo	Prohibido por firmware
+Revocar `RECEIVE_SMS`	No fue posible	Si fue posible
+`RECEIVE_SMS granted=false`	No	Si
+`RUN_IN_BACKGROUND=ignore`	Funciono	Funciono y persistio
+`RUN_ANY_IN_BACKGROUND=ignore`	El firmware llego a restaurarlo	Funciono y persistio
+`WAKE_LOCK=ignore`	No fue la prueba principal	Funciono y persistio
+Blacklist NetPolicy	Probada	Probada, no persistio reinicio
+Analisis JADX de SMS	Si	Pendiente
+Prueba SMS real / Logcat	Si	Pendiente, equipo sin SIM durante la prueba
+OTA auditada	No	Si
+Leyenda:
+Funciona: comprobado en el equipo indicado.
+Falla/prohibido: comprobado que el firmware lo impide o no logra el efecto deseado.
+Pendiente: no probado en ese dispositivo.
+---
+2. Dispositivo probado 1: Xiaomi 24090RA29G
+2.1 Caracteristicas observadas
+Fabricante: Xiaomi.
+Modelo observado: `24090RA29G`.
+Sistema durante las pruebas: Android 16 / HyperOS.
+Paquete: `co.sitic.pp`.
+Nombre/ruta observada: SysDLL.
+Ruta base:
+```text
+/product/priv-app/SysDLL
 ```
-El equipo debe aparecer como `device`, no `unauthorized`.
-2. Identificar dispositivo, compilacion y AVB
-```bat
-adb shell getprop ro.product.manufacturer
-adb shell getprop ro.product.model
-adb shell getprop ro.product.device
-adb shell getprop ro.build.version.release
-adb shell getprop ro.build.version.sdk
-adb shell getprop ro.build.fingerprint
-adb shell getprop ro.boot.verifiedbootstate
+Tipo de aplicacion:
+```text
+SYSTEM
+PRIVILEGED
+PRODUCT
 ```
-Si Verified Boot devuelve `green`, evita modificar particiones verificadas.
-3. Detectar `co.sitic.pp`
+UID observado durante las pruebas:
+```text
+10168
+```
+2.2 Identificacion
 ```bat
-adb shell pm list packages -s | findstr /i "sitic"
 adb shell pm path co.sitic.pp
+adb shell dumpsys package co.sitic.pp | findstr /i "codePath system privileged enabled installed suspended"
 adb shell pm list packages -U | findstr /i "co.sitic.pp"
-```
-Rutas observadas:
-```text
-/product/priv-app/SysDLL/SysDLL.apk
-/system/priv-app/Sysdll_CLA_CL/Sysdll_CLA_CL.apk
-```
-No asumas que todas las variantes son iguales. Guarda el UID devuelto, porque cambia entre dispositivos.
-4. Estado inicial
-```bat
-adb shell dumpsys package co.sitic.pp | findstr /i "codePath versionName versionCode system privileged installed suspended"
-adb shell dumpsys package co.sitic.pp | findstr /i "RECEIVE_SMS"
-adb shell appops get co.sitic.pp
-adb shell pidof co.sitic.pp
-adb shell dumpsys activity services co.sitic.pp
-```
-En las pruebas se observo el servicio:
-```text
-co.sitic.pp/.ServicioRegistro
-```
-Tambien se observo `SYSTEM_ALLOW_LISTED`, por lo que el sistema podia mantenerlo activo incluso con restricciones normales.
-5. Suspender el paquete
-```bat
-adb shell cmd package suspend --user 0 co.sitic.pp
-adb shell dumpsys package co.sitic.pp | findstr /i "suspended"
-```
-Resultado deseado:
-```text
-suspended=true
-```
-Comprueba si el proceso sigue vivo:
-```bat
-adb shell pidof co.sitic.pp
-adb shell dumpsys activity services co.sitic.pp
-```
-Para revertir:
-```bat
-adb shell cmd package unsuspend --user 0 co.sitic.pp
-```
-6. Probar detencion y desinstalacion
-```bat
-adb shell am force-stop --user 0 co.sitic.pp
 adb shell pidof co.sitic.pp
 ```
-Algunos firmwares prohiben expresamente el `force-stop`.
-Para comprobar si se permite retirar el paquete del usuario principal:
+La aplicacion se encontraba en la particion `/product` como aplicacion privilegiada.
+2.3 Intento de desinstalacion
 ```bat
 adb shell pm uninstall --user 0 co.sitic.pp
 ```
-Algunos firmwares responden que la desinstalacion por ADB esta prohibida. No inventes otros IDs. Lista usuarios reales:
-```bat
-adb shell pm list users
+Resultado observado:
+```text
+Failure [-1000]
 ```
-Si solo existe `User 0`, probar `--user 10`, `999`, etc. no aporta una via valida.
-7. Restringir segundo plano
+Conclusion: Package Manager no permitio retirar la aplicacion para el usuario 0.
+2.4 Intento de deshabilitacion
+```bat
+adb shell pm disable-user --user 0 co.sitic.pp
+```
+Resultado relevante:
+```text
+java.lang.SecurityException: Cannot change carrier core packages component state.
+```
+Tambien se intento modificar componentes individuales como:
+```text
+co.sitic.pp/.CellBroadcastReceiver
+co.sitic.pp/.ServicioRegistro
+```
+El firmware rechazo el cambio del estado de los componentes desde ADB shell.
+2.5 Suspension
+```bat
+adb shell cmd package suspend --user 0 co.sitic.pp
+```
+Se obtuvo:
+```text
+suspended=true
+```
+Sin embargo:
+```bat
+adb shell pidof co.sitic.pp
+```
+continuo devolviendo un PID.
+Conclusion: `suspended=true` no neutralizo por si solo el servicio privilegiado.
+2.6 Servicio activo
+Se identifico:
+```text
+co.sitic.pp/.ServicioRegistro
+```
+En `dumpsys activity services` aparecio con informacion equivalente a:
+```text
+SYSTEM_ALLOW_LISTED
+startRequested=true
+```
+El proceso permanecio activo incluso despues de intentar `force-stop`.
+2.7 Receptores de arranque
+Se encontro un receptor:
+```text
+co.sitic.pp/.CellBroadcastReceiver
+```
+asociado a:
+```text
+android.intent.action.LOCKED_BOOT_COMPLETED
+android.intent.action.BOOT_COMPLETED
+```
+Esto ayuda a explicar por que el paquete puede volver a iniciar componentes durante el arranque.
+2.8 `RECEIVE_SMS` en Xiaomi
+El permiso aparecio como:
+```text
+android.permission.RECEIVE_SMS: granted=true
+flags=[SYSTEM_FIXED|GRANTED_BY_DEFAULT|RESTRICTION_SYSTEM_EXEMPT|RESTRICTION_UPGRADE_EXEMPT]
+```
+Se intento:
+```bat
+adb shell appops set co.sitic.pp RECEIVE_SMS ignore
+```
+pero el firmware restauro `RECEIVE_SMS: allow`.
+Tambien:
+```bat
+adb shell pm revoke --user 0 co.sitic.pp android.permission.RECEIVE_SMS
+```
+fallo porque ADB shell no disponia de:
+```text
+android.permission.REVOKE_RUNTIME_PERMISSIONS
+```
+Conclusion Xiaomi: durante estas pruebas no fue posible revocar de forma persistente `RECEIVE_SMS` sin privilegios superiores.
+2.9 Segundo plano
+Se aplicaron:
 ```bat
 adb shell appops set co.sitic.pp RUN_IN_BACKGROUND ignore
 adb shell appops set co.sitic.pp RUN_ANY_IN_BACKGROUND ignore
-adb shell appops get co.sitic.pp | findstr /i "RUN_IN_BACKGROUND RUN_ANY_IN_BACKGROUND"
 ```
-Resultado deseado:
+`RUN_IN_BACKGROUND` permanecio restringido. Durante las pruebas el firmware llego a restaurar `RUN_ANY_IN_BACKGROUND` a `allow`, por lo que debe verificarse despues de reiniciar.
+2.10 NetPolicy
+El UID `10168` aparecio inicialmente en una whitelist de datos en segundo plano.
+Se retiro:
+```bat
+adb shell cmd netpolicy remove restrict-background-whitelist 10168
+```
+Se activo Data Saver:
+```bat
+adb shell cmd netpolicy set restrict-background true
+```
+Y se probo:
+```bat
+adb shell cmd netpolicy add restrict-background-blacklist 10168
+```
+Importante: NetPolicy restringe datos en segundo plano. No debe describirse como un firewall absoluto.
+2.11 Analisis JADX del receptor SMS
+Se extrajo el APK y se analizo con JADX.
+Se identifico la clase:
+```text
+co.sitic.pp.ReceptorSMS
+```
+que extiende `BroadcastReceiver` y comprueba explicitamente:
+```text
+android.provider.Telephony.SMS_RECEIVED
+```
+El codigo reconstruye mensajes desde `pdus` y utiliza:
+```text
+SmsMessage.createFromPdu(...)
+getOriginatingAddress()
+getMessageBody()
+```
+Por lo tanto, la variante analizada contiene logica capaz de obtener el remitente y el contenido de un SMS recibido.
+Tambien se identifico logica interna de validacion que, bajo condiciones especificas, puede terminar llamando una funcion de bloqueo del dispositivo. Los formatos concretos de control se omiten deliberadamente.
+2.12 Prueba controlada con SMS y Logcat
+En una prueba con un SMS inocuo se observo actividad SMS y, pocos segundos despues, actividad del paquete:
+```text
+co.sitic.pp/.jTarea
+```
+`dumpsys activity broadcasts` mostro un receptor del proceso `co.sitic.pp` asociado a:
+```text
+android.provider.Telephony.SMS_RECEIVED
+```
+Conclusion: no se trato solamente de un permiso declarado. Se comprobo la presencia de un receptor activo para `SMS_RECEIVED` y actividad temporal del paquete durante la prueba.
+---
+3. Dispositivo probado 2: Nubia Z2468N
+3.1 Caracteristicas observadas
+Fabricante: Nubia.
+Modelo: `Z2468N`.
+Device: `P780F02`.
+Android: 15.
+API: 35.
+Verified Boot observado: `green`.
+Paquete: `co.sitic.pp`.
+UID: `10288`.
+Ruta:
+```text
+/system/priv-app/Sysdll_CLA_CL/Sysdll_CLA_CL.apk
+```
+Tipo:
+```text
+SYSTEM
+PRIVILEGED
+```
+Version observada tras la actualizacion auditada:
+```text
+versionCode=1110
+versionName=0.06.1.30 GMS
+```
+3.2 Suspension
+```bat
+adb shell cmd package suspend --user 0 co.sitic.pp
+```
+Resultado:
+```text
+suspended=true
+```
+La suspension sobrevivio a reinicios normales y tambien permanecio despues de la actualizacion OTA auditada.
+3.3 Servicio activo
+A pesar de la suspension:
+```bat
+adb shell pidof co.sitic.pp
+```
+continuo devolviendo un PID.
+Se identifico nuevamente:
+```text
+co.sitic.pp/.ServicioRegistro
+```
+con excepcion equivalente a:
+```text
+SYSTEM_ALLOW_LISTED
+```
+3.4 Force-stop
+```bat
+adb shell am force-stop --user 0 co.sitic.pp
+```
+Resultado observado:
+```text
+Error: Force stop of package is forbidden
+```
+Conclusion: el firmware Nubia protege explicitamente el paquete contra `force-stop` desde ADB.
+3.5 Desinstalacion
+```bat
+adb shell pm uninstall --user 0 co.sitic.pp
+```
+Resultado observado:
+```text
+disallow uninstall co.sitic.pp by adb
+```
+La lista de usuarios mostro solamente:
+```text
+User 0: Propietario
+```
+Por lo tanto, no habia otro usuario Android real sobre el que probar una desinstalacion.
+3.6 Revocacion exitosa de `RECEIVE_SMS`
+Antes de la revocacion:
+```text
+android.permission.RECEIVE_SMS: granted=true
+flags=[GRANTED_BY_DEFAULT|RESTRICTION_SYSTEM_EXEMPT|RESTRICTION_UPGRADE_EXEMPT]
+```
+A diferencia del Xiaomi probado, no aparecia `SYSTEM_FIXED`.
+Se ejecuto:
+```bat
+adb shell pm revoke --user 0 co.sitic.pp android.permission.RECEIVE_SMS
+adb shell appops set co.sitic.pp RECEIVE_SMS ignore
+```
+Resultado:
+```text
+android.permission.RECEIVE_SMS: granted=false
+RECEIVE_SMS: ignore
+```
+El estado `granted=false` sobrevivio a reinicios normales.
+Nota sobre AppOps duplicados
+En algunas comprobaciones `appops get` mostro mas de una entrada relacionada con `RECEIVE_SMS`, por ejemplo `ignore` y `allow`.
+Para determinar si el permiso runtime esta realmente concedido, la comprobacion principal utilizada fue:
+```bat
+adb shell dumpsys package co.sitic.pp | findstr /i "RECEIVE_SMS"
+```
+El indicador determinante es:
+```text
+granted=false
+```
+3.7 Restricciones de segundo plano
+Se aplicaron:
+```bat
+adb shell appops set co.sitic.pp RUN_IN_BACKGROUND ignore
+adb shell appops set co.sitic.pp RUN_ANY_IN_BACKGROUND ignore
+```
+Se verifico:
 ```text
 RUN_IN_BACKGROUND: ignore
 RUN_ANY_IN_BACKGROUND: ignore
 ```
-Para revertir:
-```bat
-adb shell appops set co.sitic.pp RUN_IN_BACKGROUND default
-adb shell appops set co.sitic.pp RUN_ANY_IN_BACKGROUND default
-```
-8. Restringir `WAKE_LOCK`
+Ambos valores sobrevivieron a reinicios normales y estuvieron presentes despues de la OTA auditada.
+3.8 `WAKE_LOCK`
+Se aplico:
 ```bat
 adb shell appops set co.sitic.pp WAKE_LOCK ignore
-adb shell appops get co.sitic.pp | findstr /i "WAKE_LOCK"
 ```
-Para revertir:
-```bat
-adb shell appops set co.sitic.pp WAKE_LOCK default
-```
-9. Restringir `RECEIVE_SMS`
-Comprueba ambos niveles:
-```bat
-adb shell dumpsys package co.sitic.pp | findstr /i "RECEIVE_SMS"
-adb shell appops get co.sitic.pp | findstr /i "RECEIVE_SMS"
-```
-9.1 AppOp
-```bat
-adb shell appops set co.sitic.pp RECEIVE_SMS ignore
-```
-Algunos firmwares lo restauran inmediatamente a `allow`.
-9.2 Permiso runtime
-Si el firmware lo permite:
-```bat
-adb shell pm revoke --user 0 co.sitic.pp android.permission.RECEIVE_SMS
-```
-Verifica:
-```bat
-adb shell dumpsys package co.sitic.pp | findstr /i "RECEIVE_SMS"
-```
-Resultado determinante:
+Se verifico:
 ```text
-android.permission.RECEIVE_SMS: granted=false
+WAKE_LOCK: ignore
 ```
-`appops get` puede mostrar entradas duplicadas, como `ignore` y `allow`. Para saber si el permiso runtime esta concedido, usa como fuente principal `dumpsys package` y su linea `granted=true/false`.
-En un firmware con `SYSTEM_FIXED`, ADB shell no pudo revocarlo. En otro firmware sin esa bandera, la revocacion funciono y sobrevivio a reinicios normales.
-Para restaurar voluntariamente el permiso:
-```bat
-adb shell pm grant --user 0 co.sitic.pp android.permission.RECEIVE_SMS
-adb shell appops set co.sitic.pp RECEIVE_SMS default
+La restriccion sobrevivio al reinicio y a la posterior auditoria tras la actualizacion.
+3.9 NetPolicy
+Inicialmente el UID `10288` aparecia en:
+```text
+restrict-background-whitelist
 ```
-10. Restringir datos en segundo plano
-Obtiene el UID real:
+Se retiro:
 ```bat
-adb shell pm list packages -U | findstr /i "co.sitic.pp"
+adb shell cmd netpolicy remove restrict-background-whitelist 10288
 ```
-Sustituye `<UID>`:
+Se agrego temporalmente a blacklist:
 ```bat
-adb shell cmd netpolicy list restrict-background-whitelist
-adb shell cmd netpolicy list restrict-background-blacklist
-adb shell cmd netpolicy remove restrict-background-whitelist <UID>
-adb shell cmd netpolicy add restrict-background-blacklist <UID>
+adb shell cmd netpolicy add restrict-background-blacklist 10288
+```
+Y se activo:
+```bat
 adb shell cmd netpolicy set restrict-background true
 ```
-Verifica:
-```bat
-adb shell cmd netpolicy get restrict-background
-adb shell cmd netpolicy list restrict-background-whitelist
-adb shell cmd netpolicy list restrict-background-blacklist
-```
-Una prueba mostro que la blacklist desaparecia tras reiniciar, aunque el UID permanecia fuera de whitelist y Data Saver seguia activo.
-Para revertir:
-```bat
-adb shell cmd netpolicy remove restrict-background-blacklist <UID>
-```
-Solo reincorpora el UID a whitelist si quieres restaurar expresamente esa excepcion.
-11. Verificacion despues de reiniciar
-```bat
-adb reboot
-```
-Despues del arranque:
-```bat
-adb shell dumpsys package co.sitic.pp | findstr /i "RECEIVE_SMS suspended"
-adb shell appops get co.sitic.pp | findstr /i "RECEIVE_SMS WAKE_LOCK RUN_IN_BACKGROUND RUN_ANY_IN_BACKGROUND"
-adb shell cmd netpolicy get restrict-background
-adb shell cmd netpolicy list restrict-background-whitelist
-adb shell cmd netpolicy list restrict-background-blacklist
-adb shell pidof co.sitic.pp
-adb shell dumpsys activity services co.sitic.pp
-```
-No consideres persistente un cambio hasta verificarlo despues de reiniciar.
-12. Auditoria obligatoria despues de una actualizacion OTA
-Una actualizacion del sistema puede restaurar permisos aunque hayan sobrevivido a reinicios normales.
-Hallazgo reproducible
-Antes de una actualizacion OTA se mantenia:
+Persistencia observada
+Despues de reiniciar:
+Data Saver siguio `enabled`.
+UID `10288` siguio fuera de whitelist.
+La blacklist quedo vacia.
+Por lo tanto:
 ```text
-android.permission.RECEIVE_SMS: granted=false
+Blacklist NetPolicy: NO persistente en el firmware probado.
 ```
-Despues de actualizar, la ruta del APK, UID, suspension y AppOps principales continuaban, pero el firmware restauro:
-```text
-android.permission.RECEIVE_SMS: granted=true
-```
-Permanecieron:
+3.10 Auditoria despues de actualizacion OTA
+Despues de una actualizacion del sistema se reviso nuevamente el dispositivo.
+Se conservaron:
 ```text
 suspended=true
 WAKE_LOCK=ignore
 RUN_IN_BACKGROUND=ignore
 RUN_ANY_IN_BACKGROUND=ignore
 restrict-background=enabled
-UID fuera de restrict-background-whitelist
+UID 10288 fuera de whitelist
 ```
-Lista de comprobacion post-actualizacion
+Pero el firmware restauro:
+```text
+android.permission.RECEIVE_SMS: granted=true
+```
+Esto demuestra una diferencia critica:
+> Una restriccion puede sobrevivir a reinicios normales y, aun asi, ser restablecida por una actualizacion OTA.
+Se reaplico:
+```bat
+adb shell pm revoke --user 0 co.sitic.pp android.permission.RECEIVE_SMS
+adb shell appops set co.sitic.pp RECEIVE_SMS ignore
+```
+Y se recupero:
+```text
+android.permission.RECEIVE_SMS: granted=false
+```
+3.11 Lista de auditoria Nubia post-OTA
 ```bat
 adb shell getprop ro.build.fingerprint
 adb shell pm path co.sitic.pp
@@ -216,31 +387,120 @@ adb shell cmd netpolicy list restrict-background-blacklist
 adb shell pidof co.sitic.pp
 adb shell dumpsys activity services co.sitic.pp
 ```
-Si `RECEIVE_SMS` vuelve a `granted=true` y el firmware permite revocarlo:
+---
+4. Comparacion de resultados
+4.1 Diferencia principal: SMS
+Xiaomi
+`RECEIVE_SMS` estaba protegido con `SYSTEM_FIXED`; ADB shell no pudo revocarlo y AppOps era restaurado por el firmware.
+Nubia
+`RECEIVE_SMS` no mostraba `SYSTEM_FIXED`; `pm revoke` funciono y produjo:
+```text
+granted=false
+```
+Sin embargo, una OTA volvio a conceder el permiso, por lo que debe auditarse despues de cada actualizacion.
+4.2 Diferencia principal: ubicacion del APK
+Xiaomi:
+```text
+/product/priv-app/SysDLL
+```
+Nubia:
+```text
+/system/priv-app/Sysdll_CLA_CL
+```
+Ambas instalaciones eran privilegiadas, pero eso no implica que tengan el mismo comportamiento ni la misma politica OEM.
+4.3 Similitudes observadas
+En ambos dispositivos:
+`co.sitic.pp` era aplicacion del sistema privilegiada.
+`cmd package suspend` fue aceptado.
+El proceso/servicio podia continuar con `suspended=true`.
+Se encontro `.ServicioRegistro` activo.
+Los mecanismos normales de retiro/desactivacion estaban restringidos por el firmware.
+Era necesario verificar cada control despues de reiniciar.
+---
+5. Procedimiento generico para otros dispositivos
+No copies directamente UID, rutas o conclusiones de Xiaomi/Nubia.
+5.1 Identificar equipo
 ```bat
-adb shell pm revoke --user 0 co.sitic.pp android.permission.RECEIVE_SMS
-adb shell appops set co.sitic.pp RECEIVE_SMS ignore
+adb devices
+adb shell getprop ro.product.manufacturer
+adb shell getprop ro.product.model
+adb shell getprop ro.product.device
+adb shell getprop ro.build.version.release
+adb shell getprop ro.build.version.sdk
+adb shell getprop ro.build.fingerprint
+adb shell getprop ro.boot.verifiedbootstate
+```
+5.2 Detectar paquete
+```bat
+adb shell pm list packages -s | findstr /i "sitic"
+adb shell pm path co.sitic.pp
+adb shell pm list packages -U | findstr /i "co.sitic.pp"
+```
+5.3 Capturar estado original
+```bat
+adb shell dumpsys package co.sitic.pp
+adb shell appops get co.sitic.pp
+adb shell pidof co.sitic.pp
+adb shell dumpsys activity services co.sitic.pp
+adb shell cmd netpolicy get restrict-background
+adb shell cmd netpolicy list restrict-background-whitelist
+adb shell cmd netpolicy list restrict-background-blacklist
+```
+Guarda las salidas antes de modificar nada.
+5.4 Suspender
+```bat
+adb shell cmd package suspend --user 0 co.sitic.pp
+adb shell dumpsys package co.sitic.pp | findstr /i "suspended"
+```
+5.5 Evaluar `RECEIVE_SMS`
+```bat
 adb shell dumpsys package co.sitic.pp | findstr /i "RECEIVE_SMS"
 adb shell appops get co.sitic.pp | findstr /i "RECEIVE_SMS"
 ```
-La comprobacion principal debe volver a ser:
-```text
-android.permission.RECEIVE_SMS: granted=false
-```
-Conclusion: que una restriccion sobreviva a reinicios no significa que sobrevivira a una actualizacion OTA.
-13. Copiar el APK para analisis
-Usa la ruta exacta de `pm path`:
+Si el firmware permite revocarlo:
 ```bat
-adb pull /ruta/real/al/APK.apk
+adb shell pm revoke --user 0 co.sitic.pp android.permission.RECEIVE_SMS
+adb shell appops set co.sitic.pp RECEIVE_SMS ignore
 ```
-Ejemplos observados:
+Verifica `granted=false` antes de considerar exitosa la revocacion.
+5.6 Segundo plano y WakeLock
 ```bat
-adb pull /product/priv-app/SysDLL/SysDLL.apk
-adb pull /system/priv-app/Sysdll_CLA_CL/Sysdll_CLA_CL.apk
+adb shell appops set co.sitic.pp RUN_IN_BACKGROUND ignore
+adb shell appops set co.sitic.pp RUN_ANY_IN_BACKGROUND ignore
+adb shell appops set co.sitic.pp WAKE_LOCK ignore
 ```
-Esto solo copia el APK, no modifica el telefono.
-14. Analisis defensivo con JADX
-Abre el APK en JADX GUI y busca:
+5.7 NetPolicy
+Obtiene el UID primero. Luego:
+```bat
+adb shell cmd netpolicy remove restrict-background-whitelist <UID>
+adb shell cmd netpolicy add restrict-background-blacklist <UID>
+adb shell cmd netpolicy set restrict-background true
+```
+No describas esta configuracion como bloqueo total de Internet. Comprueba su persistencia despues del reinicio.
+5.8 Verificacion posterior
+```bat
+adb reboot
+```
+Despues:
+```bat
+adb shell dumpsys package co.sitic.pp | findstr /i "RECEIVE_SMS suspended"
+adb shell appops get co.sitic.pp | findstr /i "RECEIVE_SMS WAKE_LOCK RUN_IN_BACKGROUND RUN_ANY_IN_BACKGROUND"
+adb shell cmd netpolicy list restrict-background-whitelist
+adb shell cmd netpolicy list restrict-background-blacklist
+adb shell pidof co.sitic.pp
+```
+Repite la auditoria tambien despues de cada OTA.
+---
+6. Analisis del APK con JADX
+Primero obten la ruta real:
+```bat
+adb shell pm path co.sitic.pp
+```
+Copia el APK usando esa ruta:
+```bat
+adb pull /ruta/mostrada/por/pm/path.apk
+```
+En JADX GUI realiza busquedas globales de:
 ```text
 SMS_RECEIVED
 ReceptorSMS
@@ -251,68 +511,85 @@ SmsMessage
 getMessageBody
 getOriginatingAddress
 ```
-En una variante se identifico `co.sitic.pp.ReceptorSMS`, que:
-extendia `BroadcastReceiver`;
-comprobaba `android.provider.Telephony.SMS_RECEIVED`;
-reconstruia mensajes desde `pdus`;
-obtenia remitente y cuerpo del SMS;
-aplicaba logica interna que podia terminar invocando una funcion de bloqueo.
-Esto explica por que `READ_SMS: ignore` no basta: recibir un SMS por broadcast es distinto de consultar la base de mensajes.
-Esta guia excluye deliberadamente los formatos de control y cualquier dato capaz de activar bloqueo o desbloqueo.
-15. Verificacion controlada con Logcat
-Solo en un equipo propio o autorizado y con un SMS inocuo:
+El analisis debe usarse para comprender componentes y riesgos, no para generar mensajes capaces de activar funciones de control.
+---
+7. Verificacion con Logcat
+Solo sobre un dispositivo propio o autorizado y usando mensajes inocuos.
 ```bat
 adb logcat -c
 adb logcat -v time | findstr /i "SMS SMS_RECEIVED co.sitic.pp ReceptorSMS jTarea"
 ```
-Envia un mensaje de prueba normal, espera unos segundos y termina con `Ctrl+C`. No uses formatos obtenidos mediante ingenieria inversa.
-Tambien puedes revisar:
+Despues de una prueba controlada tambien puede consultarse:
 ```bat
 adb shell dumpsys activity broadcasts | findstr /i "co.sitic.pp SMS_RECEIVED"
 adb shell dumpsys activity services co.sitic.pp
 ```
-16. Perfil de contencion recomendado
-Cuando el firmware acepte cada operacion:
-```text
-suspended=true
-RECEIVE_SMS permission=granted=false
-RECEIVE_SMS AppOp=ignore
-RUN_IN_BACKGROUND=ignore
-RUN_ANY_IN_BACKGROUND=ignore
-WAKE_LOCK=ignore
-UID fuera de restrict-background-whitelist
-UID en restrict-background-blacklist, si persiste
-restrict-background=enabled
-```
-Esto es contencion, no eliminacion fisica. El proceso puede seguir activo si el fabricante lo mantiene mediante servicios privilegiados.
-17. Comandos de recuperacion
+Que una aplicacion tenga `RECEIVE_SMS` concedido demuestra capacidad, pero para afirmar que proceso un SMS concreto conviene correlacionar registros y actividad durante una prueba controlada.
+---
+8. Comandos de reversion
+Antes de modificar cualquier configuracion guarda el estado inicial.
+Quitar suspension
 ```bat
 adb shell cmd package unsuspend --user 0 co.sitic.pp
+```
+Restaurar AppOps modificados
+```bat
 adb shell appops set co.sitic.pp RUN_IN_BACKGROUND default
 adb shell appops set co.sitic.pp RUN_ANY_IN_BACKGROUND default
 adb shell appops set co.sitic.pp WAKE_LOCK default
 adb shell appops set co.sitic.pp RECEIVE_SMS default
+```
+Restaurar `RECEIVE_SMS`, si corresponde
+```bat
 adb shell pm grant --user 0 co.sitic.pp android.permission.RECEIVE_SMS
+```
+Retirar blacklist NetPolicy
+```bat
 adb shell cmd netpolicy remove restrict-background-blacklist <UID>
 ```
-Si activaste Data Saver solo para la prueba:
+Desactivar Data Saver global si se activo solo para pruebas
 ```bat
 adb shell cmd netpolicy set restrict-background false
 ```
-Este ultimo comando es global y afecta a todas las aplicaciones.
-18. Metodo recomendado
-Identificar dispositivo, compilacion, ruta y UID.
-Guardar el estado original.
-Aplicar un cambio.
-Verificarlo inmediatamente.
-Reiniciar.
-Verificar nuevamente.
-Repetir toda la auditoria despues de cada OTA.
-Registro de cambios
-2026-11: auditoria post-OTA
-Documentado que una actualizacion del sistema restauro `RECEIVE_SMS` de `granted=false` a `granted=true`.
-Confirmado que la revocacion pudo reaplicarse en el firmware actualizado.
-Anadida lista completa para comparar fingerprint, version, ruta, UID, permiso, AppOps, NetPolicy, proceso y servicios.
-Aclarado que `dumpsys package` es la comprobacion principal si `appops get` muestra resultados duplicados.
+Este ultimo comando es global y afecta a otras aplicaciones.
+---
+9. Advertencias y limitaciones
+`suspended=true` no significa proceso muerto
+En ambos dispositivos se observo un proceso/servicio activo a pesar de la suspension.
+AppOps no equivale siempre al permiso runtime
+Para `RECEIVE_SMS`, comprueba tambien:
+```bat
+adb shell dumpsys package co.sitic.pp | findstr /i "RECEIVE_SMS"
+```
+Data Saver no es un firewall absoluto
+`netpolicy` sirve para politicas de datos en segundo plano. No garantiza aislamiento completo de red para una aplicacion privilegiada.
+No modificar `/system` o `/product` a ciegas
+Eliminar manualmente el APK desde una particion verificada puede provocar fallos de arranque o problemas con Android Verified Boot.
+Las OTA pueden cambiar el resultado
+El caso Nubia demostro que una OTA puede restaurar un permiso que habia permanecido revocado durante reinicios normales.
+Las implementaciones OEM son diferentes
+No generalices un resultado Xiaomi a Nubia, Samsung, Motorola, ZTE u otros fabricantes sin volver a ejecutar la fase de identificacion y auditoria.
+---
+10. Registro de cambios
+2026-11 - Separacion por fabricantes
+Separados los resultados Xiaomi y Nubia.
+Anadida matriz comparativa de pruebas.
+Documentadas rutas APK, UID, sistema y comportamiento observado para cada equipo.
+Separados resultados comprobados de procedimientos genericos.
+Anadida auditoria post-OTA especifica del Nubia.
+Documentada la diferencia de `RECEIVE_SMS`: protegido con `SYSTEM_FIXED` en el Xiaomi probado y revocable en el Nubia probado.
+2026-11 - Hallazgo post-OTA Nubia
+Una OTA restauro `RECEIVE_SMS` de `granted=false` a `granted=true`.
+La suspension, `WAKE_LOCK`, `RUN_IN_BACKGROUND` y `RUN_ANY_IN_BACKGROUND` permanecieron.
+Se reaplico la revocacion de `RECEIVE_SMS` exitosamente.
+---
 Privacidad
-La guia esta anonimizada. No incluye numeros de serie, IMEI, telefonos personales, nombres de propietarios, PINes ni cargas SMS operativas.
+Este documento ha sido anonimizado. No contiene:
+numeros de serie;
+IMEI;
+numeros telefonicos personales;
+nombres de propietarios;
+PINes;
+cargas SMS operativas de bloqueo/desbloqueo.
+Licencia / uso
+La informacion se presenta con fines de administracion, investigacion y contencion defensiva de dispositivos propios o expresamente autorizados.
